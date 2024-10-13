@@ -18,23 +18,32 @@ import os
 
 # learning rate
 lr = 1e-2
+
 # number of training epochs
 epoch_n = 20
+
 # input image-mask size
 image_size = 572
 # root directory of project
 root_dir = os.getcwd()
+
 # training batch size
 batch_size = 4
+
 # use checkpoint model for training
 load = False
+
 # use GPU for training
 gpu = True
 
-# autodetect which system is in use
-data_dir = os.path.join(root_dir.replace("\\src", ""),
-                        'data\\cells') if platform.system() == 'Windows' else os.path.join(root_dir,
-                                                                                           'data/cells')
+current_os = platform.system()
+
+if current_os == 'Windows':
+    # Use Windows-style path
+    data_dir = os.path.join(root_dir, 'data\\cells').replace("\\src","")
+else:
+    # Use Unix-style path (Linux, macOS, etc.)
+    data_dir = os.path.join(root_dir, 'data/cells')
 
 trainset = Cell_data(data_dir=data_dir, size=image_size)
 trainloader = DataLoader(trainset, batch_size=4, shuffle=True)
@@ -42,13 +51,9 @@ trainloader = DataLoader(trainset, batch_size=4, shuffle=True)
 testset = Cell_data(data_dir=data_dir, size=image_size, train=False)
 testloader = DataLoader(testset, batch_size=4)
 
-
-print(torch.cuda.is_available())  # Should return True if CUDA is installed correctly
-print(torch.cuda.device_count())  # Number of GPUs available
-
 device = torch.device('cuda:0' if gpu else 'cpu')
 
-model = UNet(n_channels=1, n_classes=4).to('cuda:0').to(device)
+model = UNet(n_channels=1,n_classes=4).to('cuda:0').to(device)
 
 if load:
     print('loading model')
@@ -56,7 +61,7 @@ if load:
 
 criterion = nn.CrossEntropyLoss()
 
-optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=0.0005)
+optimizer = optim.Adam(model.parameters(), lr=lr, momentum=0.99, weight_decay=0.0005)
 
 model.train()
 for e in range(epoch_n):
