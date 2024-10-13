@@ -1,3 +1,5 @@
+import platform
+
 from model import UNet
 from dataloader import Cell_data
 
@@ -10,7 +12,7 @@ import matplotlib.pyplot as plt
 
 import os
 
-#import any other libraries you need below this line
+# import any other libraries you need below this line
 
 # Paramteres
 
@@ -29,7 +31,10 @@ load = False
 # use GPU for training
 gpu = True
 
-data_dir = os.path.join(root_dir, 'data/cells')
+# autodetect which system is in use
+data_dir = os.path.join(root_dir.replace("\\src", ""),
+                        'data\\cells') if platform.system() == 'Windows' else os.path.join(root_dir,
+                                                                                           'data/cells')
 
 trainset = Cell_data(data_dir=data_dir, size=image_size)
 trainloader = DataLoader(trainset, batch_size=4, shuffle=True)
@@ -37,9 +42,13 @@ trainloader = DataLoader(trainset, batch_size=4, shuffle=True)
 testset = Cell_data(data_dir=data_dir, size=image_size, train=False)
 testloader = DataLoader(testset, batch_size=4)
 
+
+print(torch.cuda.is_available())  # Should return True if CUDA is installed correctly
+print(torch.cuda.device_count())  # Number of GPUs available
+
 device = torch.device('cuda:0' if gpu else 'cpu')
 
-model = UNet().to('cuda:0').to(device)
+model = UNet(n_channels=1, n_classes=4).to('cuda:0').to(device)
 
 if load:
     print('loading model')
@@ -47,7 +56,7 @@ if load:
 
 criterion = nn.CrossEntropyLoss()
 
-optimizer = optim.Adam(model.parameters(), lr=lr, momentum=0.99, weight_decay=0.0005)
+optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=0.0005)
 
 model.train()
 for e in range(epoch_n):
@@ -109,10 +118,7 @@ for e in range(epoch_n):
 
         print('Accuracy: %.4f ---- Loss: %.4f' % (correct / total, total_loss / testset.__len__()))
 
-
-
-
-#testing and visualization
+# testing and visualization
 
 model.eval()
 
@@ -135,10 +141,10 @@ with torch.no_grad():
         output_masks.append(output_mask)
         output_labels.append(labels)
 
-fig, axes = plt.subplots(testset.__len__(), 2, figsize = (20, 20))
+fig, axes = plt.subplots(testset.__len__(), 2, figsize=(20, 20))
 
 for i in range(testset.__len__()):
-  axes[i, 0].imshow(output_labels[i])
-  axes[i, 0].axis('off')
-  axes[i, 1].imshow(output_masks[i])
-  axes[i, 1].axis('off')
+    axes[i, 0].imshow(output_labels[i])
+    axes[i, 0].axis('off')
+    axes[i, 1].imshow(output_masks[i])
+    axes[i, 1].axis('off')
