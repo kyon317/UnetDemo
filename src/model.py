@@ -4,7 +4,6 @@ import torch.nn.functional as F
 
 
 # import any other libraries you need below this line
-import torchvision.transforms.functional as v1
 
 class twoConvBlock(nn.Module):
     """Part 1  The Convolutional blocks"""
@@ -47,8 +46,7 @@ class upStep(nn.Module):
     def __init__(self, input_channel, output_channel):
         super(upStep, self).__init__()
         # initialize the up path
-        self.upConv = nn.ConvTranspose2d(input_channel, output_channel, kernel_size=2,
-                                         stride=2)  # transpose convolutions
+        self.upConv = nn.ConvTranspose2d(input_channel, output_channel, kernel_size=2, stride=2)  # transpose convolutions
         self.convBlock = twoConvBlock(output_channel * 2, output_channel)  #
 
     def forward(self, x, skip_connection):
@@ -56,15 +54,15 @@ class upStep(nn.Module):
         x = self.upConv(x)
 
         # process crop and copy
-        # c,h,w
+        # reference : https://github.com/milesial/Pytorch-UNet/blob/67bf11b4db4c5f2891bd7e8e7f58bcde8ee2d2db/unet/unet_parts.py
+        # target_size = (x.size(2), x.size(3))
+        # skip_connection = v1.center_crop(skip_connection, output_size=target_size)
         diffY = skip_connection.size()[2] - x.size()[2]
         diffX = skip_connection.size()[3] - x.size()[3]
-        # reference : https://github.com/milesial/Pytorch-UNet/blob/67bf11b4db4c5f2891bd7e8e7f58bcde8ee2d2db/unet/unet_parts.py
-        skip_connection = F.pad(skip_connection, [-diffX // 2, -(diffX - diffX // 2),
-                                                  -diffY // 2, -(diffY - diffY // 2)])
-        target_size = (x.size(2), x.size(3))
-        skip_connection = v1.center_crop(skip_connection, output_size=target_size)
-        x = torch.cat([x, skip_connection], dim=1)
+
+        x = F.pad(x, [diffX // 2, diffX - diffX // 2,
+                        diffY // 2, diffY - diffY // 2])
+        x = torch.cat([skip_connection, x], dim=1)
         new_x = self.convBlock(x)
         return new_x
 
@@ -110,4 +108,4 @@ class UNet(nn.Module):
 
         x_out = self.outc(x)
 
-        return x_out
+        return F.sigmoid(x_out)

@@ -1,4 +1,4 @@
-import platform
+import numpy as np
 
 from model import UNet
 from dataloader import Cell_data
@@ -13,55 +13,100 @@ import matplotlib.pyplot as plt
 import os
 
 # import any other libraries you need below this line
+import wandb
 
-# Paramteres
 
-# learning rate
-lr = 1e-2
 
-# number of training epochs
+"""Pretrain Definition"""
+#Paramteres
+#learning rate
+lr = 1e-4
+
+#number of training epochs
 epoch_n = 20
 
-# input image-mask size
-image_size = 572
-# root directory of project
+#input image-mask size
+# image_size = 572
+image_size = 256
+# image_size = 128
+
+#root directory of project
 root_dir = os.getcwd()
 
-# training batch size
+#training batch size
 batch_size = 4
 
-# use checkpoint model for training
+#use checkpoint model for training
 load = False
 
-# use GPU for training
+#use GPU for training
 gpu = True
 
-current_os = platform.system()
+data_dir = os.path.join(root_dir, 'data/cells')
+dirs = os.getcwd()
+# Function to save a checkpoint in the TensorBoard log directory
+def save_checkpoint(model, optimizer, epoch, loss_metric, accuracy_metric, checkpoint_dir=dirs):
+    checkpoint_path = f"{checkpoint_dir}/checkpoint_epoch_{epoch+1}.pth"
 
-if current_os == 'Windows':
-    # Use Windows-style path
-    data_dir = os.path.join(root_dir, 'data\\cells').replace("\\src","")
-else:
-    # Use Unix-style path (Linux, macOS, etc.)
-    data_dir = os.path.join(root_dir, 'data/cells')
+    # Use .compute() to get the values of the metrics
+    checkpoint = {
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'epoch': epoch,
+        'loss': loss_metric,  # Get the computed loss
+        'accuracy': accuracy_metric  # Get the computed accuracy
+    }
+    torch.save(checkpoint, checkpoint_path)
+    print(f'Checkpoint saved at {checkpoint_path}')
 
-trainset = Cell_data(data_dir=data_dir, size=image_size)
-trainloader = DataLoader(trainset, batch_size=4, shuffle=True)
+# Function to load a checkpoint from the TensorBoard log directory
+def load_checkpoint(model, optimizer, checkpoint_dir=dirs):
+    import glob
+    # Find the latest checkpoint (e.g., based on the highest epoch number)
+    checkpoint_paths = glob.glob(f"{checkpoint_dir}/checkpoint_epoch_*.pth")
+    checkpoint_paths.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
+    latest_checkpoint = checkpoint_paths[-1]
 
-testset = Cell_data(data_dir=data_dir, size=image_size, train=False)
-testloader = DataLoader(testset, batch_size=4)
+    checkpoint = torch.load(latest_checkpoint)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    start_epoch = checkpoint['epoch'] + 1  # Resume from the next epoch
+    loss = checkpoint['loss']
+    accuracy = checkpoint['accuracy']
+    print(f'Checkpoint loaded from {latest_checkpoint}. Resuming training from epoch {start_epoch}')
+
+    return start_epoch, loss, accuracy  # You can return these for reference but don't update accuracy_metric with them
+
+# wandb setup
+# Initialize wandb project, reference: https://colab.research.google.com/github/wandb/examples/blob/master/colabs/intro/Intro_to_Weights_%26_Biases.ipynb#scrollTo=R_3hYQyqb0fJ
+wandb.init(project="assignment2_unet_training", config={
+    "learning_rate": lr,
+    "epochs": epoch_n,
+    "batch_size": batch_size,
+    "image_size": image_size
+})
+
+trainset = Cell_data(data_dir = data_dir, size = image_size)
+trainloader = DataLoader(trainset, batch_size = batch_size, shuffle=True)
+
+testset = Cell_data(data_dir = data_dir, size = image_size, train = False)
+testloader = DataLoader(testset, batch_size = batch_size)
 
 device = torch.device('cuda:0' if gpu else 'cpu')
 
-model = UNet(n_channels=1,n_classes=4).to('cuda:0').to(device)
-
-if load:
-    print('loading model')
-    model.load_state_dict(torch.load('checkpoint.pt'))
+model = UNet(n_channels=1, n_classes=2).to('cuda:0').to(device)
 
 criterion = nn.CrossEntropyLoss()
+# Use AdamW for better weight decay
+optimizer = optim.AdamW(model.parameters(), lr=lr, betas=(0.8, 0.9), weight_decay=5e-4)
 
-optimizer = optim.Adam(model.parameters(), lr=lr, momentum=0.99, weight_decay=0.0005)
+if load:
+  print('loading model')
+  load_checkpoint(model,optimizer,dirs)
+
+
+
+"""TRAINING"""
 
 model.train()
 for e in range(epoch_n):
@@ -70,8 +115,8 @@ for e in range(epoch_n):
     for i, data in enumerate(trainloader):
         image, label = data
 
-        image = image.unsqueeze(1).to(device)
-        label = label.long().to(device)
+        image = image.to(device)
+        label = label.squeeze(1).long().to(device)
 
         pred = model(image)
 
@@ -79,20 +124,18 @@ for e in range(epoch_n):
         crop_y = (label.shape[2] - pred.shape[3]) // 2
 
         label = label[:, crop_x: label.shape[1] - crop_x, crop_y: label.shape[2] - crop_y]
-
         loss = criterion(pred, label)
 
         loss.backward()
-
         optimizer.step()
         optimizer.zero_grad()
 
         epoch_loss += loss.item()
-
-        print('batch %d --- Loss: %.4f' % (i, loss.item() / batch_size))
+        if i % 5 == 0:
+            print('batch %d --- Loss: %.4f' % (i, loss.item() / batch_size))
+            wandb.log({'batch_loss': loss.item() / batch_size})
     print('Epoch %d / %d --- Loss: %.4f' % (e + 1, epoch_n, epoch_loss / trainset.__len__()))
-
-    torch.save(model.state_dict(), 'checkpoint.pt')
+    wandb.log({'epoch_loss': epoch_loss / trainset.__len__()})
 
     model.eval()
 
@@ -104,8 +147,8 @@ for e in range(epoch_n):
         for i, data in enumerate(testloader):
             image, label = data
 
-            image = image.unsqueeze(1).to(device)
-            label = label.long().to(device)
+            image = image.to(device)
+            label = label.squeeze(1).long().to(device)
 
             pred = model(image)
             crop_x = (label.shape[1] - pred.shape[2]) // 2
@@ -121,9 +164,16 @@ for e in range(epoch_n):
             total += label.shape[0] * label.shape[1] * label.shape[2]
             correct += (pred_labels == label).sum().item()
 
-        print('Accuracy: %.4f ---- Loss: %.4f' % (correct / total, total_loss / testset.__len__()))
+        accuracy = correct / total
+        test_loss = total_loss / testset.__len__()
+        print('Accuracy: %.4f ---- Loss: %.4f' % (accuracy, test_loss))
+        wandb.log({'test_loss': test_loss, 'accuracy': accuracy})
+        if e % 5 == 0 or e == epoch_n - 1:
+            save_checkpoint(model, optimizer, e, epoch_loss / trainset.__len__(), correct / total)
+wandb.finish()
 
-# testing and visualization
+
+"""VISUALIZATION AND EVALUATION"""
 
 model.eval()
 
@@ -131,12 +181,13 @@ output_masks = []
 output_labels = []
 
 with torch.no_grad():
-    for i in range(testset.__len__()):
+    for i in range(len(testset)):
         image, labels = testset.__getitem__(i)
 
-        input_image = image.unsqueeze(0).unsqueeze(0).to(device)
+        input_image = image.unsqueeze(0).to(device)
         pred = model(input_image)
-
+        # print(torch.unique(labels))
+        aaa = torch.argmax(pred, dim=1).cpu().numpy()
         output_mask = torch.max(pred, dim=1)[1].cpu().squeeze(0).numpy()
 
         crop_x = (labels.shape[0] - output_mask.shape[0]) // 2
@@ -146,10 +197,14 @@ with torch.no_grad():
         output_masks.append(output_mask)
         output_labels.append(labels)
 
-fig, axes = plt.subplots(testset.__len__(), 2, figsize=(20, 20))
+fig, axes = plt.subplots(testset.__len__(), 2, figsize = (20, 20))
+print(output_masks[0].shape)
+print(output_labels[0].shape)
+print(output_masks[0])
+print(np.unique(output_masks[0]))
 
 for i in range(testset.__len__()):
-    axes[i, 0].imshow(output_labels[i])
-    axes[i, 0].axis('off')
-    axes[i, 1].imshow(output_masks[i])
-    axes[i, 1].axis('off')
+  axes[i, 0].imshow(output_labels[i])
+  axes[i, 0].axis('off')
+  axes[i, 1].imshow(output_masks[i].squeeze())
+  axes[i, 1].axis('off')
